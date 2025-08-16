@@ -1,0 +1,114 @@
+/* --- Builder Mode blocked.css (fixed contrast) --- */
+
+/* Remove UA-driven surprises by setting explicit text colors */
+html,
+body {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    display: grid;
+    place-items: center;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    background:
+        radial-gradient(1000px 600px at 50% -10%, rgba(59, 130, 246, .12), transparent 70%) no-repeat,
+        linear-gradient(180deg, #f8fafc, #f1f5f9);
+    color: #0f172a;
+    /* NEW: default text color (slate-900) */
+}
+
+.card {
+    max-width: 720px;
+    padding: 28px 28px 24px;
+    border-radius: 18px;
+    background: #ffffff;
+    color: inherit;
+    /* inherits #0f172a */
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .08);
+    border: 1px solid #e5e7eb;
+    text-align: center;
+}
+
+h1 {
+    margin: 0 0 10px;
+    font-size: 28px;
+    color: #0f172a;
+}
+
+p {
+    margin: 0 0 18px;
+    color: #334155;
+}
+
+/* slate-600 for body text */
+
+.actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+button {
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: #f3f4f6;
+    color: #0f172a;
+    /* NEW: readable button label */
+    cursor: pointer;
+    font-weight: 600;
+    transition: background .15s ease, border-color .15s ease, transform .02s ease;
+}
+
+button:hover {
+    background: #e5e7eb;
+}
+
+button:active {
+    transform: translateY(1px);
+}
+
+button:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+    border-color: #3b82f6;
+}
+
+/* Dark mode polish */
+@media (prefers-color-scheme: dark) {
+    body {
+        background:
+            radial-gradient(1000px 600px at 50% -10%, rgba(59, 130, 246, .20), transparent 70%) no-repeat,
+            linear-gradient(180deg, #0b1220, #0b1220);
+        color: #e5e7eb;
+        /* slate-200 */
+    }
+
+    .card {
+        background: #101827;
+        /* near-slate-900 */
+        border-color: #1f2a37;
+        color: inherit;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+    }
+
+    h1 {
+        color: #f8fafc;
+    }
+
+    p {
+        color: #cbd5e1;
+    }
+
+    /* slate-300 */
+    button {
+        background: #1f2937;
+        border-color: #334155;
+        color: #e5e7eb;
+    }
+
+    button:hover {
+        background: #2a3648;
+    }
+}

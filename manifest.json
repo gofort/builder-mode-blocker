@@ -1,0 +1,32 @@
+{
+    "manifest_version": 3,
+    "name": "Builder Mode — Site Blocker",
+    "version": "1.0.0",
+    "description": "Block configured sites and nudge yourself to build instead.",
+    "permissions": [
+        "storage",
+        "declarativeNetRequest"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "options_page": "options.html",
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "blocked.html",
+                "blocked.css",
+                "blocked.js"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
+    ],
+    "action": {
+        "default_title": "Builder Mode"
+    }
+}
