@@ -1,82 +1,85 @@
-const STORAGE_KEY = "blockedList";
-const $list = document.getElementById("list");
-const $input = document.getElementById("domainInput");
-const $form = document.getElementById("addForm");
-const $status = document.getElementById("status");
-const $clearAll = document.getElementById("clearAll");
+// One add/remove UI per list; "otherKey" keeps an entry out of both lists
+function setupList(section, key, otherKey, otherName) {
+    const $list = section.querySelector(".list");
+    const $input = section.querySelector(".entryInput");
+    const $form = section.querySelector(".addForm");
+    const $status = section.querySelector(".status");
+    const $clearAll = section.querySelector(".clearAll");
 
-// Keep normalization consistent with background
-function normalizeDomain(input) {
-    if (!input) return null;
-    input = input.trim();
-    try {
-        if (!/^https?:\/\//i.test(input)) input = "https://" + input;
-        const u = new URL(input);
-        return stripWww(u.hostname.toLowerCase());
-    } catch {
-        let host = input
-            .replace(/^https?:\/\//i, "")
-            .replace(/\/.*$/, "")
-            .replace(/^\*\.?/, "")
-            .toLowerCase()
-            .trim();
-        if (!host || /[\s]/.test(host)) return null;
-        return stripWww(host);
-    }
-}
-function stripWww(host) { return host.replace(/^www\./, ""); }
+    function render(list) {
+        $list.innerHTML = "";
+        list.forEach((entry, idx) => {
+            const li = document.createElement("li");
+            const span = document.createElement("span");
+            span.className = "domain";
+            span.textContent = entry;
 
-async function loadList() {
-    const { [STORAGE_KEY]: list = [] } = await chrome.storage.sync.get(STORAGE_KEY);
-    render(list);
-}
+            const btn = document.createElement("button");
+            btn.className = "remove";
+            btn.textContent = "Remove";
+            btn.addEventListener("click", async () => {
+                const next = list.filter((_, i) => i !== idx);
+                await chrome.storage.sync.set({ [key]: next });
+                flash("Removed");
+                render(next);
+            });
 
-function render(list) {
-    $list.innerHTML = "";
-    list.forEach((domain, idx) => {
-        const li = document.createElement("li");
-        const span = document.createElement("span");
-        span.className = "domain";
-        span.textContent = domain;
-
-        const btn = document.createElement("button");
-        btn.className = "remove";
-        btn.textContent = "Remove";
-        btn.addEventListener("click", async () => {
-            const next = list.filter((_, i) => i !== idx);
-            await chrome.storage.sync.set({ [STORAGE_KEY]: next });
-            flash("Removed");
-            render(next);
+            li.appendChild(span);
+            li.appendChild(btn);
+            $list.appendChild(li);
         });
+    }
 
-        li.appendChild(span);
-        li.appendChild(btn);
-        $list.appendChild(li);
+    function flash(text) {
+        $status.textContent = text;
+        setTimeout(() => { $status.textContent = ""; }, 1200);
+    }
+
+    $form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const entry = normalizeEntry($input.value);
+        if (!entry) { flash("Invalid entry"); return; }
+        const { [key]: list = [], [otherKey]: other = [] } = await chrome.storage.sync.get([key, otherKey]);
+        if (list.includes(entry)) { flash("Already added"); return; }
+        if (other.includes(entry)) { flash(`Already in ${otherName}`); return; }
+        const next = [...list, entry].sort();
+        await chrome.storage.sync.set({ [key]: next });
+        $input.value = "";
+        flash("Added");
+        render(next);
     });
+
+    $clearAll.addEventListener("click", async () => {
+        await chrome.storage.sync.set({ [key]: [] });
+        flash("Cleared");
+        render([]);
+    });
+
+    chrome.storage.sync.get(key).then(({ [key]: list = [] }) => render(list));
 }
 
-function flash(text) {
-    $status.textContent = text;
-    setTimeout(() => { $status.textContent = ""; }, 1200);
+setupList(document.getElementById("blockedSection"), BLOCKED_KEY, POOL_KEY, "Time pool");
+setupList(document.getElementById("poolSection"), POOL_KEY, BLOCKED_KEY, "Blocked");
+
+const $poolMinutes = document.getElementById("poolMinutes");
+const $poolUsage = document.getElementById("poolUsage");
+
+async function renderPoolUsage() {
+    const { [POOL_MINUTES_KEY]: minutes = DEFAULT_POOL_MINUTES } = await chrome.storage.sync.get(POOL_MINUTES_KEY);
+    const { [POOL_USAGE_KEY]: usage } = await chrome.storage.local.get(POOL_USAGE_KEY);
+    const now = Date.now();
+    const reset = new Date(nextReset(now)).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    $poolMinutes.value = minutes;
+    $poolUsage.textContent = `Used ${formatMs(usedMsNow(usage, now))} of ${formatMs(minutes * 60 * 1000)}. Resets ${reset}.`;
 }
 
-$form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const domain = normalizeDomain($input.value);
-    if (!domain) { flash("Invalid domain"); return; }
-    const { [STORAGE_KEY]: list = [] } = await chrome.storage.sync.get(STORAGE_KEY);
-    if (list.includes(domain)) { flash("Already added"); return; }
-    const next = [...list, domain].sort();
-    await chrome.storage.sync.set({ [STORAGE_KEY]: next });
-    $input.value = "";
-    flash("Added");
-    render(next);
+$poolMinutes.addEventListener("change", async () => {
+    const minutes = Math.max(0, Math.floor(Number($poolMinutes.value) || 0));
+    await chrome.storage.sync.set({ [POOL_MINUTES_KEY]: minutes });
 });
 
-$clearAll.addEventListener("click", async () => {
-    await chrome.storage.sync.set({ [STORAGE_KEY]: [] });
-    flash("Cleared");
-    render([]);
+chrome.storage.onChanged.addListener((changes) => {
+    if (changes[POOL_MINUTES_KEY] || changes[POOL_USAGE_KEY]) renderPoolUsage();
 });
 
-loadList();
+renderPoolUsage();

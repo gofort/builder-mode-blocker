@@ -1,3 +1,8 @@
+if (new URLSearchParams(location.search).get("reason") === "pool") {
+    document.getElementById("reason").textContent =
+        "Your time pool is used up. It resets on Sunday at 23:00.";
+}
+
 document.getElementById("openOptions").addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
 });

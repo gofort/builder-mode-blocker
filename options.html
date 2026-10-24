@@ -10,21 +10,53 @@
 <body>
     <div class="container">
         <h1>Builder Mode — Blocklist</h1>
-        <p>Add domains to block (e.g., <code>youtube.com</code>, <code>x.com</code>, <code>facebook.com</code>).
-            Subdomains are included.</p>
 
-        <form id="addForm">
-            <input id="domainInput" type="text" placeholder="e.g. youtube.com" autocomplete="off" />
-            <button type="submit">Add</button>
-        </form>
+        <section id="blockedSection">
+            <h2>Blocked</h2>
+            <p>Add domains to block (e.g., <code>youtube.com</code>, <code>x.com</code>, <code>facebook.com</code>).
+                Subdomains are included. Add a path to block only that page and its subpages
+                (e.g., <code>facebook.com/nexta.tv</code>).</p>
 
-        <ul id="list"></ul>
+            <form class="addForm">
+                <input class="entryInput" type="text" placeholder="e.g. youtube.com or facebook.com/nexta.tv"
+                    autocomplete="off" />
+                <button type="submit">Add</button>
+            </form>
 
-        <div class="foot">
-            <button id="clearAll">Clear All</button>
-            <span id="status"></span>
-        </div>
+            <ul class="list"></ul>
+
+            <div class="foot">
+                <button class="clearAll">Clear All</button>
+                <span class="status"></span>
+            </div>
+        </section>
+
+        <section id="poolSection">
+            <h2>Time pool</h2>
+            <p>These sites share one weekly time budget. Time counts only while one of them is the active tab.
+                When the pool is empty, they are blocked until Sunday 23:00.</p>
+
+            <label class="minutes">
+                Minutes per week
+                <input id="poolMinutes" type="number" min="0" step="1" />
+            </label>
+            <p id="poolUsage"></p>
+
+            <form class="addForm">
+                <input class="entryInput" type="text" placeholder="e.g. linkedin.com or instagram.com"
+                    autocomplete="off" />
+                <button type="submit">Add</button>
+            </form>
+
+            <ul class="list"></ul>
+
+            <div class="foot">
+                <button class="clearAll">Clear All</button>
+                <span class="status"></span>
+            </div>
+        </section>
     </div>
+    <script src="common.js"></script>
     <script src="options.js"></script>
 </body>
 
