@@ -5,7 +5,8 @@
     "description": "Block configured sites and nudge yourself to build instead.",
     "permissions": [
         "storage",
-        "declarativeNetRequest"
+        "declarativeNetRequest",
+        "alarms"
     ],
     "host_permissions": [
         "<all_urls>"
@@ -14,6 +15,18 @@
         "service_worker": "background.js"
     },
     "options_page": "options.html",
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "common.js",
+                "content.js"
+            ],
+            "run_at": "document_end"
+        }
+    ],
     "web_accessible_resources": [
         {
             "resources": [
