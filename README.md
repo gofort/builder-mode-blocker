@@ -34,6 +34,7 @@ Built on Manifest V3 with **Declarative Net Request** for fast, pre-load blockin
 ```
 builder-mode-blocker/
 ├─ manifest.json
+├─ icons/         (icon.svg source and PNG sizes)
 ├─ common.js      (shared helpers and storage keys)
 ├─ background.js
 ├─ content.js     (time pool ticker and badge)
