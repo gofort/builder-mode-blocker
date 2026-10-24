@@ -11,7 +11,7 @@ Built on Manifest V3 with **Declarative Net Request** for fast, pre-load blockin
 - **One-click editing** of your blocklist via the Options page.
 - **Subdomain coverage** automatically (e.g., adding `youtube.com` also blocks `m.youtube.com`).
 - **Page blocking**: add a path (e.g., `facebook.com/nexta.tv`) to block one page and its subpages.
-- **Time pool**: sites such as `linkedin.com` share one weekly budget (default 10 minutes). A badge in the top-right corner shows the time left.
+- **Time pool**: sites such as `linkedin.com` share one weekly budget (default 10 minutes). A badge in the top-right corner shows the time left and how often you opened the site, e.g. `(3/8)` = 3 today, 8 this week.
 - **Syncs across Chrome** profiles via `chrome.storage.sync`.
 - **Works in Incognito** (enable in extension details).
 
@@ -22,7 +22,7 @@ Built on Manifest V3 with **Declarative Net Request** for fast, pre-load blockin
 - Your blocklist is stored under `chrome.storage.sync` as strings: a domain, or a domain with a path.
 - On install/startup or when you edit the list, the extension builds **dynamic DNR rules** that match `||entry^` for each entry and **redirects** main-frame navigations to `blocked.html` (the focus page).
 - Single-page apps change the URL without a request, so DNR does not see it. A `tabs.onUpdated` listener checks these URLs with the same rule.
-- Time pool: `content.js` runs on every page. On a pool site, it shows the badge. While the tab is visible and its window has focus, it sends one tick per second to the background, which adds the second to `poolUsage` in `chrome.storage.local`. When the pool is empty, the background adds DNR rules for the pool sites and redirects to `blocked.html?reason=pool`. A `chrome.alarms` alarm resets the pool every Sunday at 23:00 local time.
+- Time pool: `content.js` runs on every page. On a pool site, it shows the badge. While the tab is visible and its window has focus, it sends one tick per second to the background, which adds the second to `poolUsage` in `chrome.storage.local`. When the pool is empty, the background adds DNR rules for the pool sites and redirects to `blocked.html?reason=pool`. A `chrome.alarms` alarm resets the pool every Sunday at 23:00 local time. Open counter: on each tab URL change, the background finds the matching pool entry. If it differs from the entry the tab showed before (kept in `chrome.storage.session`), it adds one open to `poolOpens` in `chrome.storage.local`. Reloads and navigation inside the site are not opens.
 - The focus page offers two actions: **Edit Blocklist** and **Go Back**.
 
 > Note: Chrome enforces a per‑extension cap on **dynamic DNR rules**. For typical personal use, this is more than sufficient. If you ever approach the cap, consolidate entries or consider static rules as an advanced optimization.
@@ -73,7 +73,8 @@ builder-mode-blocker/
 2. Time counts only while a pool site is the active tab in the focused window. Background tabs cost nothing.
 3. When the pool is empty, the pool sites are blocked until Sunday 23:00 local time.
 4. The site lists and the minutes setting sync across devices. The used time is per device.
-5. An entry can be in only one list.
+5. The badge shows `(today/week)` opens of the site. An open is a tab that arrives from another site or a new tab. Reloads, navigation inside the site, and blocked attempts do not count. "Today" starts at midnight; "week" starts at the pool reset.
+6. An entry can be in only one list.
 
 ### Matching rules
 

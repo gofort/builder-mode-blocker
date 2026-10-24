@@ -4,6 +4,7 @@ importScripts("common.js");
 const RESET_ALARM = "poolReset";
 const BLOCKED_PAGE = "/blocked.html";
 const POOL_BLOCKED_PAGE = "/blocked.html?reason=pool";
+const TAB_SITE_PREFIX = "tabSite:";
 
 // Run storage read-modify-write and rule updates one at a time
 let queue = Promise.resolve();
@@ -95,9 +96,48 @@ function scheduleReset() {
     chrome.alarms.create(RESET_ALARM, { when: nextReset(Date.now()) });
 }
 
+// chrome.storage.session holds the pool entry each tab shows, so a reload
+// or a navigation inside the site is not a new open
+function tabSiteKey(tabId) {
+    return TAB_SITE_PREFIX + tabId;
+}
+
+// A tab opens a pool site when it arrives from another site or a new tab
+function trackTabSite(tabId, entry) {
+    return serial(async () => {
+        const key = tabSiteKey(tabId);
+        const { [key]: last = null } = await chrome.storage.session.get(key);
+        if (entry === last) return;
+        if (!entry) return chrome.storage.session.remove(key);
+        await chrome.storage.session.set({ [key]: entry });
+        const { [POOL_OPENS_KEY]: stored } = await chrome.storage.local.get(POOL_OPENS_KEY);
+        const opens = opensNow(stored, Date.now());
+        opens.today[entry] = (opens.today[entry] || 0) + 1;
+        opens.week[entry] = (opens.week[entry] || 0) + 1;
+        await chrome.storage.local.set({ [POOL_OPENS_KEY]: opens });
+    });
+}
+
+// Tabs that already show a pool site (restored, or open before a reload
+// of the extension) are not new opens
+function seedTabSites() {
+    return serial(async () => {
+        const pool = await getEntries(POOL_KEY);
+        const items = {};
+        for (const tab of await chrome.tabs.query({})) {
+            let url;
+            try { url = new URL(tab.url); } catch { continue; }
+            const entry = matchingEntry(url, pool);
+            if (entry) items[tabSiteKey(tab.id)] = entry;
+        }
+        await chrome.storage.session.set(items);
+    });
+}
+
 function init() {
     syncDynamicRules();
     scheduleReset();
+    seedTabSites();
 }
 
 // Keep rules in sync on install/startup and whenever the lists change
@@ -134,14 +174,23 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 
 // Single-page apps (e.g. Facebook) change the URL with the History API.
 // DNR sees no request then, so check the new tab URL here.
+// Every URL change also feeds the open counter.
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     if (!changeInfo.url) return;
     let url;
     try { url = new URL(changeInfo.url); } catch { return; }
-    if (!/^https?:$/.test(url.protocol)) return;
-    const matches = (entries) => entries.some((entry) => matchesEntry(url, entry));
+    if (!/^https?:$/.test(url.protocol)) return trackTabSite(tabId, null);
     let page = null;
-    if (matches(await getEntries(BLOCKED_KEY))) page = BLOCKED_PAGE;
-    else if (matches(await getEntries(POOL_KEY)) && (await isPoolEmpty())) page = POOL_BLOCKED_PAGE;
+    let poolEntry = null;
+    if (matchingEntry(url, await getEntries(BLOCKED_KEY))) page = BLOCKED_PAGE;
+    else poolEntry = matchingEntry(url, await getEntries(POOL_KEY));
+    // A blocked attempt is not an open
+    if (poolEntry && (await isPoolEmpty())) {
+        page = POOL_BLOCKED_PAGE;
+        poolEntry = null;
+    }
+    trackTabSite(tabId, poolEntry);
     if (page) chrome.tabs.update(tabId, { url: chrome.runtime.getURL(page) });
 });
+
+chrome.tabs.onRemoved.addListener((tabId) => trackTabSite(tabId, null));

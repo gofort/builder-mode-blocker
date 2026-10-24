@@ -3,15 +3,11 @@
     let poolList = [];
     let limitMs = DEFAULT_POOL_MINUTES * 60 * 1000;
     let usage = null;
+    let opens = null;
     let badge = null;
 
-    function onPoolSite() {
-        const url = new URL(location.href);
-        return poolList.some((entry) => matchesEntry(url, entry));
-    }
-
-    function render(show) {
-        if (!show) {
+    function render(entry) {
+        if (!entry) {
             if (badge) badge.host.style.display = "none";
             return;
         }
@@ -28,15 +24,17 @@
             document.documentElement.appendChild(host);
             badge = { host, el };
         }
-        const left = limitMs - usedMsNow(usage, Date.now());
-        badge.el.textContent = `Pool ${formatMs(left)} left`;
+        const now = Date.now();
+        const left = limitMs - usedMsNow(usage, now);
+        const { today, week } = opensNow(opens, now);
+        badge.el.textContent = `Pool ${formatMs(left)} left (${today[entry] || 0}/${week[entry] || 0})`;
         badge.host.style.display = "";
     }
 
     function tick() {
-        const show = onPoolSite();
-        render(show);
-        if (show && document.visibilityState === "visible" && document.hasFocus()) {
+        const entry = matchingEntry(new URL(location.href), poolList);
+        render(entry);
+        if (entry && document.visibilityState === "visible" && document.hasFocus()) {
             // Fails after the extension reloads; stop then
             chrome.runtime.sendMessage({ type: "tick" }).catch(() => clearInterval(timer));
         }
@@ -48,16 +46,18 @@
             limitMs = (changes[POOL_MINUTES_KEY].newValue ?? DEFAULT_POOL_MINUTES) * 60 * 1000;
         }
         if (areaName === "local" && changes[POOL_USAGE_KEY]) usage = changes[POOL_USAGE_KEY].newValue;
+        if (areaName === "local" && changes[POOL_OPENS_KEY]) opens = changes[POOL_OPENS_KEY].newValue;
     });
 
     let timer = null;
     Promise.all([
         chrome.storage.sync.get([POOL_KEY, POOL_MINUTES_KEY]),
-        chrome.storage.local.get(POOL_USAGE_KEY)
+        chrome.storage.local.get([POOL_USAGE_KEY, POOL_OPENS_KEY])
     ]).then(([sync, local]) => {
         poolList = sync[POOL_KEY] || [];
         limitMs = (sync[POOL_MINUTES_KEY] ?? DEFAULT_POOL_MINUTES) * 60 * 1000;
         usage = local[POOL_USAGE_KEY];
+        opens = local[POOL_OPENS_KEY];
         tick();
         timer = setInterval(tick, 1000);
     });
