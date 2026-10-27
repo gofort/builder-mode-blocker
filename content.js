@@ -4,6 +4,7 @@
     let limitMs = DEFAULT_POOL_MINUTES * 60 * 1000;
     let usage = null;
     let opens = null;
+    let graceMs = null; // ms of the grace minute left, from the last tick reply
     let badge = null;
 
     function render(entry) {
@@ -25,9 +26,11 @@
             badge = { host, el };
         }
         const now = Date.now();
-        const left = limitMs - usedMsNow(usage, now);
+        const time = graceMs === null
+            ? `Pool ${formatMs(limitMs - usedMsNow(usage, now))} left`
+            : `Extra ${formatMs(graceMs)} left`;
         const { today, week } = opensNow(opens, now);
-        badge.el.textContent = `Pool ${formatMs(left)} left (${today[entry] || 0}/${week[entry] || 0})`;
+        badge.el.textContent = `${time} (${today[entry] || 0}/${week[entry] || 0})`;
         badge.host.style.display = "";
     }
 
@@ -35,8 +38,10 @@
         const entry = matchingEntry(new URL(location.href), poolList);
         render(entry);
         if (entry && document.visibilityState === "visible" && document.hasFocus()) {
-            // Fails after the extension reloads; stop then
-            chrome.runtime.sendMessage({ type: "tick" }).catch(() => clearInterval(timer));
+            chrome.runtime.sendMessage({ type: "tick" })
+                .then((reply) => { graceMs = reply?.graceMs ?? null; })
+                // Fails after the extension reloads; stop then
+                .catch(() => clearInterval(timer));
         }
     }
 

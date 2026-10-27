@@ -12,6 +12,7 @@ Built on Manifest V3 with **Declarative Net Request** for fast, pre-load blockin
 - **Subdomain coverage** automatically (e.g., adding `youtube.com` also blocks `m.youtube.com`).
 - **Page blocking**: add a path (e.g., `facebook.com/nexta.tv`) to block one page and its subpages.
 - **Time pool**: sites such as `linkedin.com` share one weekly budget (default 10 minutes). A badge in the top-right corner shows the time left and how often you opened the site, e.g. `(3/8)` = 3 today, 8 this week.
+- **Grace minute**: when the pool is empty, the focus page offers **Give me 1 minute**. The minute belongs to that tab only and is gone when the tab closes.
 - **Syncs across Chrome** profiles via `chrome.storage.sync`.
 - **Works in Incognito** (enable in extension details).
 
@@ -23,7 +24,8 @@ Built on Manifest V3 with **Declarative Net Request** for fast, pre-load blockin
 - On install/startup or when you edit the list, the extension builds **dynamic DNR rules** that match `||entry^` for each entry and **redirects** main-frame navigations to `blocked.html` (the focus page).
 - Single-page apps change the URL without a request, so DNR does not see it. A `tabs.onUpdated` listener checks these URLs with the same rule.
 - Time pool: `content.js` runs on every page. On a pool site, it shows the badge. While the tab is visible and its window has focus, it sends one tick per second to the background, which adds the second to `poolUsage` in `chrome.storage.local`. When the pool is empty, the background adds DNR rules for the pool sites and redirects to `blocked.html?reason=pool`. A `chrome.alarms` alarm resets the pool every Sunday at 23:00 local time. Open counter: on each tab URL change, the background finds the matching pool entry. If it differs from the entry the tab showed before (kept in `chrome.storage.session`), it adds one open to `poolOpens` in `chrome.storage.local`. Reloads and navigation inside the site are not opens.
-- The focus page offers two actions: **Edit Blocklist** and **Go Back**.
+- Grace minute: the pool rules redirect with a regex, so the focus page URL carries the blocked URL. The button asks the background for a grace. The background adds session DNR `allow` rules for the pool sites, bound to that tab ID, records 60 s in `chrome.storage.session`, and navigates the tab to the site. Ticks from that tab count down the grace instead of the pool. At zero the allow rules go and the tab lands on the focus page again, without the button. The record stays as "used" until the tab closes, so one tab gets one grace. A pool reset or an edit of the pool list ends all graces.
+- The focus page offers two actions: **Edit Blocklist** and **Go Back**. With an empty pool it can also offer **Give me 1 minute**.
 
 > Note: Chrome enforces a per‑extension cap on **dynamic DNR rules**. For typical personal use, this is more than sufficient. If you ever approach the cap, consolidate entries or consider static rules as an advanced optimization.
 
@@ -72,6 +74,7 @@ builder-mode-blocker/
 1. In **Options → Time pool**, set the minutes per week and add sites, e.g. `linkedin.com`, `instagram.com`.
 2. Time counts only while a pool site is the active tab in the focused window. Background tabs cost nothing.
 3. When the pool is empty, the pool sites are blocked until Sunday 23:00 local time.
+   The focus page offers **Give me 1 minute**: one minute of focused time for that tab. The badge then shows `Extra 0:42 left`. The minute is gone when the tab closes, and a tab gets it only once. A new tab gets a new minute.
 4. The site lists and the minutes setting sync across devices. The used time is per device.
 5. The badge shows `(today/week)` opens of the site. An open is a tab that arrives from another site or a new tab. Reloads, navigation inside the site, and blocked attempts do not count. "Today" starts at midnight; "week" starts at the pool reset.
 6. An entry can be in only one list.

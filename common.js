@@ -57,6 +57,14 @@ function matchingEntry(url, entries) {
     return entries.find((entry) => matchesEntry(url, entry)) || null;
 }
 
+// Regex form of "||entry^" for DNR. The match is the whole URL, so a
+// redirect can carry it with "\0". Case-insensitive. The optional group
+// is a subdomain or user info before the host.
+function entryRegex(entry) {
+    const escaped = entry.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return `^https?://([^/?#]*[.@])?${escaped}([^a-zA-Z0-9_\\-.%@].*)?$`;
+}
+
 // The pool resets every Sunday at 23:00 local time
 function currentPeriodStart(now) {
     const d = new Date(now);

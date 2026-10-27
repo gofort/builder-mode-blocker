@@ -5,6 +5,8 @@ const RESET_ALARM = "poolReset";
 const BLOCKED_PAGE = "/blocked.html";
 const POOL_BLOCKED_PAGE = "/blocked.html?reason=pool";
 const TAB_SITE_PREFIX = "tabSite:";
+const GRACE_PREFIX = "grace:";
+const GRACE_MS = 60 * 1000;
 
 // Run storage read-modify-write and rule updates one at a time
 let queue = Promise.resolve();
@@ -43,6 +45,12 @@ async function isPoolEmpty() {
     return usage.usedMs >= limitMs;
 }
 
+// The focus page for an empty pool. The blocked URL is the last parameter,
+// raw, so its own query string survives.
+function poolBlockedUrl(url) {
+    return chrome.runtime.getURL(POOL_BLOCKED_PAGE) + (url ? "&url=" + url : "");
+}
+
 function buildRules(entries, firstId, extensionPath) {
     // Each rule redirects main-frame navigations matching the entry (and subdomains)
     // to our local "blocked.html".
@@ -62,6 +70,29 @@ function buildRules(entries, firstId, extensionPath) {
     }));
 }
 
+function poolCondition(entry) {
+    return {
+        regexFilter: entryRegex(entry),
+        isUrlFilterCaseSensitive: false,
+        resourceTypes: ["main_frame"]
+    };
+}
+
+// Pool rules match with a regex, so the redirect carries the blocked URL
+// ("\0" is the whole match) and the focus page can offer a grace minute
+function buildPoolRules(entries, firstId) {
+    let id = firstId;
+    return entries.map((entry) => ({
+        id: id++,
+        priority: 1,
+        action: {
+            type: "redirect",
+            redirect: { regexSubstitution: poolBlockedUrl("\\0") }
+        },
+        condition: poolCondition(entry)
+    }));
+}
+
 function syncDynamicRules() {
     return serial(async () => {
         const blocked = await getEntries(BLOCKED_KEY);
@@ -69,7 +100,7 @@ function syncDynamicRules() {
         const pool = (await isPoolEmpty()) ? await getEntries(POOL_KEY) : [];
         const rules = [
             ...buildRules(blocked, 1, BLOCKED_PAGE),
-            ...buildRules(pool, blocked.length + 1, POOL_BLOCKED_PAGE)
+            ...buildPoolRules(pool, blocked.length + 1)
         ];
 
         // Remove all existing dynamic rules, then add current set
@@ -88,12 +119,106 @@ async function resetPool() {
     await chrome.storage.local.set({
         [POOL_USAGE_KEY]: { periodStart: currentPeriodStart(Date.now()), usedMs: 0 }
     });
+    await serial(clearGraces);
     await syncDynamicRules();
     scheduleReset();
 }
 
 function scheduleReset() {
     chrome.alarms.create(RESET_ALARM, { when: nextReset(Date.now()) });
+}
+
+// A grace minute lets one tab through the pool block, once per tab.
+// chrome.storage.session holds the ms left per tab: 0 once used up,
+// absent when never granted. Session DNR allow rules bound to the tab
+// let its navigations through; they go when the grace ends.
+function graceKey(tabId) {
+    return GRACE_PREFIX + tabId;
+}
+
+async function getGrace(tabId) {
+    const key = graceKey(tabId);
+    const { [key]: ms = null } = await chrome.storage.session.get(key);
+    return ms;
+}
+
+async function hasGrace(tabId) {
+    return (await getGrace(tabId)) > 0;
+}
+
+async function removeGraceRules(keep) {
+    const rules = await chrome.declarativeNetRequest.getSessionRules();
+    const removeRuleIds = rules.filter(keep).map((r) => r.id);
+    if (removeRuleIds.length) {
+        await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+    }
+}
+
+// Not serial: called from inside serial callbacks
+async function dropGrace(tabId, used) {
+    await removeGraceRules((r) => r.condition.tabIds?.includes(tabId));
+    if (used) await chrome.storage.session.set({ [graceKey(tabId)]: 0 });
+    else await chrome.storage.session.remove(graceKey(tabId));
+}
+
+async function clearGraces() {
+    await removeGraceRules(() => true);
+    const all = await chrome.storage.session.get(null);
+    const keys = Object.keys(all).filter((k) => k.startsWith(GRACE_PREFIX));
+    if (keys.length) await chrome.storage.session.remove(keys);
+}
+
+function startGrace(tabId, target) {
+    return serial(async () => {
+        let url;
+        try { url = new URL(target); } catch { return false; }
+        const pool = await getEntries(POOL_KEY);
+        if (!/^https?:$/.test(url.protocol) || !matchingEntry(url, pool)) return false;
+        if ((await getGrace(tabId)) !== null) return false;
+        const existing = await chrome.declarativeNetRequest.getSessionRules();
+        let id = existing.reduce((max, r) => Math.max(max, r.id), 0) + 1;
+        const addRules = pool.map((entry) => ({
+            id: id++,
+            priority: 2,
+            action: { type: "allow" },
+            condition: { ...poolCondition(entry), tabIds: [tabId] }
+        }));
+        await chrome.declarativeNetRequest.updateSessionRules({ addRules });
+        await chrome.storage.session.set({ [graceKey(tabId)]: GRACE_MS });
+        await chrome.tabs.update(tabId, { url: url.href });
+        return true;
+    });
+}
+
+// One focused second on a pool site: from the grace minute if the tab
+// has one, else from the pool
+function onTick(tab) {
+    return serial(async () => {
+        const grace = await getGrace(tab.id);
+        if (grace > 0) {
+            const left = grace - 1000;
+            if (left > 0) {
+                await chrome.storage.session.set({ [graceKey(tab.id)]: left });
+            } else {
+                await dropGrace(tab.id, true);
+                chrome.tabs.update(tab.id, { url: poolBlockedUrl(tab.url) });
+            }
+            return { graceMs: Math.max(left, 0) };
+        }
+        const usage = await getPoolUsage();
+        const limitMs = await getPoolLimitMs();
+        if (usage.usedMs < limitMs) {
+            usage.usedMs += 1000;
+            await chrome.storage.local.set({ [POOL_USAGE_KEY]: usage });
+        }
+        return { graceMs: null, empty: usage.usedMs >= limitMs };
+    }).then((result) => {
+        if (result.empty) {
+            syncDynamicRules();
+            chrome.tabs.update(tab.id, { url: poolBlockedUrl(tab.url) });
+        }
+        return { graceMs: result.graceMs };
+    });
 }
 
 // chrome.storage.session holds the pool entry each tab shows, so a reload
@@ -149,27 +274,27 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName === "sync" && (changes[BLOCKED_KEY] || changes[POOL_KEY] || changes[POOL_MINUTES_KEY])) {
+    if (areaName !== "sync") return;
+    // The allow rules of a grace mirror the pool list; a new list voids them
+    if (changes[POOL_KEY]) serial(clearGraces);
+    if (changes[BLOCKED_KEY] || changes[POOL_KEY] || changes[POOL_MINUTES_KEY]) {
         syncDynamicRules();
     }
 });
 
-// content.js sends one tick per second while a pool site has focus
-chrome.runtime.onMessage.addListener((msg, sender) => {
-    if (msg?.type !== "tick" || !sender.tab) return;
-    serial(async () => {
-        const usage = await getPoolUsage();
-        const limitMs = await getPoolLimitMs();
-        if (usage.usedMs < limitMs) {
-            usage.usedMs += 1000;
-            await chrome.storage.local.set({ [POOL_USAGE_KEY]: usage });
-        }
-        return usage.usedMs >= limitMs;
-    }).then((empty) => {
-        if (!empty) return;
-        syncDynamicRules();
-        chrome.tabs.update(sender.tab.id, { url: chrome.runtime.getURL(POOL_BLOCKED_PAGE) });
-    });
+// content.js sends one tick per second while a pool site has focus.
+// blocked.js asks for, and then starts, the grace minute of its tab.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!sender.tab) return;
+    let reply;
+    if (msg?.type === "tick") reply = onTick(sender.tab);
+    else if (msg?.type === "graceState") {
+        reply = getGrace(sender.tab.id).then((ms) => ({ available: ms === null }));
+    } else if (msg?.type === "grace") {
+        reply = startGrace(sender.tab.id, msg.url).then((ok) => ({ ok }));
+    } else return;
+    reply.then(sendResponse, () => sendResponse(null));
+    return true;
 });
 
 // Single-page apps (e.g. Facebook) change the URL with the History API.
@@ -182,15 +307,21 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     if (!/^https?:$/.test(url.protocol)) return trackTabSite(tabId, null);
     let page = null;
     let poolEntry = null;
-    if (matchingEntry(url, await getEntries(BLOCKED_KEY))) page = BLOCKED_PAGE;
-    else poolEntry = matchingEntry(url, await getEntries(POOL_KEY));
-    // A blocked attempt is not an open
-    if (poolEntry && (await isPoolEmpty())) {
-        page = POOL_BLOCKED_PAGE;
+    if (matchingEntry(url, await getEntries(BLOCKED_KEY))) {
+        page = chrome.runtime.getURL(BLOCKED_PAGE);
+    } else {
+        poolEntry = matchingEntry(url, await getEntries(POOL_KEY));
+    }
+    // A blocked attempt is not an open; a grace tab goes through
+    if (poolEntry && (await isPoolEmpty()) && !(await hasGrace(tabId))) {
+        page = poolBlockedUrl(changeInfo.url);
         poolEntry = null;
     }
     trackTabSite(tabId, poolEntry);
-    if (page) chrome.tabs.update(tabId, { url: chrome.runtime.getURL(page) });
+    if (page) chrome.tabs.update(tabId, { url: page });
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => trackTabSite(tabId, null));
+chrome.tabs.onRemoved.addListener((tabId) => {
+    trackTabSite(tabId, null);
+    serial(() => dropGrace(tabId, false));
+});
