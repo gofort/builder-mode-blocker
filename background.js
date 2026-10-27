@@ -128,7 +128,8 @@ function scheduleReset() {
     chrome.alarms.create(RESET_ALARM, { when: nextReset(Date.now()) });
 }
 
-// A grace minute lets one tab through the pool block, once per tab.
+// A grace minute lets one tab through the pool block, once per tab and
+// at most MAX_GRACES_PER_DAY times per pool site per day.
 // chrome.storage.session holds the ms left per tab: 0 once used up,
 // absent when never granted. Session DNR allow rules bound to the tab
 // let its navigations through; they go when the grace ends.
@@ -168,13 +169,29 @@ async function clearGraces() {
     if (keys.length) await chrome.storage.session.remove(keys);
 }
 
+async function getGraces() {
+    const { [POOL_GRACES_KEY]: stored } = await chrome.storage.local.get(POOL_GRACES_KEY);
+    return gracesNow(stored, Date.now());
+}
+
+// A tab may get a grace for a URL when the URL is a pool site, the tab
+// had no grace yet, and the site had fewer than MAX_GRACES_PER_DAY today
+async function graceCheck(tabId, target) {
+    let url;
+    try { url = new URL(target); } catch { return null; }
+    const pool = await getEntries(POOL_KEY);
+    const entry = /^https?:$/.test(url.protocol) ? matchingEntry(url, pool) : null;
+    if (!entry || (await getGrace(tabId)) !== null) return null;
+    const graces = await getGraces();
+    if ((graces.today[entry] || 0) >= MAX_GRACES_PER_DAY) return null;
+    return { url, pool, entry, graces };
+}
+
 function startGrace(tabId, target) {
     return serial(async () => {
-        let url;
-        try { url = new URL(target); } catch { return false; }
-        const pool = await getEntries(POOL_KEY);
-        if (!/^https?:$/.test(url.protocol) || !matchingEntry(url, pool)) return false;
-        if ((await getGrace(tabId)) !== null) return false;
+        const check = await graceCheck(tabId, target);
+        if (!check) return false;
+        const { url, pool, entry, graces } = check;
         const existing = await chrome.declarativeNetRequest.getSessionRules();
         let id = existing.reduce((max, r) => Math.max(max, r.id), 0) + 1;
         const addRules = pool.map((entry) => ({
@@ -184,6 +201,8 @@ function startGrace(tabId, target) {
             condition: { ...poolCondition(entry), tabIds: [tabId] }
         }));
         await chrome.declarativeNetRequest.updateSessionRules({ addRules });
+        graces.today[entry] = (graces.today[entry] || 0) + 1;
+        await chrome.storage.local.set({ [POOL_GRACES_KEY]: graces });
         await chrome.storage.session.set({ [graceKey(tabId)]: GRACE_MS });
         await chrome.tabs.update(tabId, { url: url.href });
         return true;
@@ -289,7 +308,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     let reply;
     if (msg?.type === "tick") reply = onTick(sender.tab);
     else if (msg?.type === "graceState") {
-        reply = getGrace(sender.tab.id).then((ms) => ({ available: ms === null }));
+        reply = graceCheck(sender.tab.id, msg.url).then((ok) => ({ available: !!ok }));
     } else if (msg?.type === "grace") {
         reply = startGrace(sender.tab.id, msg.url).then((ok) => ({ ok }));
     } else return;

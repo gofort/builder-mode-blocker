@@ -7,7 +7,7 @@ if (new URLSearchParams(location.search).get("reason") === "pool") {
     const url = at === -1 ? null : location.search.slice(at + 5) + location.hash;
     if (url) {
         const btn = document.getElementById("grace");
-        chrome.runtime.sendMessage({ type: "graceState" }).then((state) => {
+        chrome.runtime.sendMessage({ type: "graceState", url }).then((state) => {
             if (state?.available) btn.hidden = false;
         });
         btn.addEventListener("click", () => {

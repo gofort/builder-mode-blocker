@@ -4,7 +4,9 @@ const POOL_KEY = "poolList";
 const POOL_MINUTES_KEY = "poolMinutes";
 const POOL_USAGE_KEY = "poolUsage"; // chrome.storage.local: { periodStart, usedMs }
 const POOL_OPENS_KEY = "poolOpens"; // chrome.storage.local: { periodStart, dayStart, today: {entry: n}, week: {entry: n} }
+const POOL_GRACES_KEY = "poolGraces"; // chrome.storage.local: { periodStart, dayStart, today: {entry: n} }
 const DEFAULT_POOL_MINUTES = 10;
+const MAX_GRACES_PER_DAY = 2;
 
 // Normalize user input to "youtube.com" or "facebook.com/nexta.tv"
 function normalizeEntry(input) {
@@ -98,6 +100,14 @@ function opensNow(opens, now) {
         today: samePeriod && opens.dayStart === dayStart ? opens.today || {} : {},
         week: samePeriod ? opens.week || {} : {}
     };
+}
+
+// Graces from an earlier day count as zero
+function gracesNow(graces, now) {
+    const periodStart = currentPeriodStart(now);
+    const dayStart = currentDayStart(now);
+    const sameDay = graces?.periodStart === periodStart && graces.dayStart === dayStart;
+    return { periodStart, dayStart, today: sameDay ? graces.today || {} : {} };
 }
 
 // Usage from an earlier period counts as zero
