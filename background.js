@@ -29,15 +29,14 @@ async function getEntries(key) {
 }
 
 async function getPoolLimitMs() {
-    const { [POOL_MINUTES_KEY]: minutes = DEFAULT_POOL_MINUTES } =
-        await chrome.storage.sync.get(POOL_MINUTES_KEY);
-    return minutes * 60 * 1000;
+    const settings = await chrome.storage.sync.get([POOL_WORKDAY_MINUTES_KEY, POOL_FREE_DAY_MINUTES_KEY]);
+    return poolLimitMs(settings, Date.now());
 }
 
 async function getPoolUsage() {
     const now = Date.now();
     const { [POOL_USAGE_KEY]: usage } = await chrome.storage.local.get(POOL_USAGE_KEY);
-    return { periodStart: currentPeriodStart(now), usedMs: usedMsNow(usage, now) };
+    return { dayStart: currentDayStart(now), usedMs: usedMsNow(usage, now) };
 }
 
 async function isPoolEmpty() {
@@ -117,7 +116,7 @@ function syncDynamicRules() {
 
 async function resetPool() {
     await chrome.storage.local.set({
-        [POOL_USAGE_KEY]: { periodStart: currentPeriodStart(Date.now()), usedMs: 0 }
+        [POOL_USAGE_KEY]: { dayStart: currentDayStart(Date.now()), usedMs: 0 }
     });
     await serial(clearGraces);
     await syncDynamicRules();
@@ -257,7 +256,6 @@ function trackTabSite(tabId, entry) {
         const { [POOL_OPENS_KEY]: stored } = await chrome.storage.local.get(POOL_OPENS_KEY);
         const opens = opensNow(stored, Date.now());
         opens.today[entry] = (opens.today[entry] || 0) + 1;
-        opens.week[entry] = (opens.week[entry] || 0) + 1;
         await chrome.storage.local.set({ [POOL_OPENS_KEY]: opens });
     });
 }
@@ -296,7 +294,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "sync") return;
     // The allow rules of a grace mirror the pool list; a new list voids them
     if (changes[POOL_KEY]) serial(clearGraces);
-    if (changes[BLOCKED_KEY] || changes[POOL_KEY] || changes[POOL_MINUTES_KEY]) {
+    if (changes[BLOCKED_KEY] || changes[POOL_KEY] ||
+        changes[POOL_WORKDAY_MINUTES_KEY] || changes[POOL_FREE_DAY_MINUTES_KEY]) {
         syncDynamicRules();
     }
 });

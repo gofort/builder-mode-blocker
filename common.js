@@ -1,11 +1,13 @@
 // Shared by background.js, options.js and content.js
 const BLOCKED_KEY = "blockedList";
 const POOL_KEY = "poolList";
-const POOL_MINUTES_KEY = "poolMinutes";
-const POOL_USAGE_KEY = "poolUsage"; // chrome.storage.local: { periodStart, usedMs }
-const POOL_OPENS_KEY = "poolOpens"; // chrome.storage.local: { periodStart, dayStart, today: {entry: n}, week: {entry: n} }
-const POOL_GRACES_KEY = "poolGraces"; // chrome.storage.local: { periodStart, dayStart, today: {entry: n} }
-const DEFAULT_POOL_MINUTES = 10;
+const POOL_WORKDAY_MINUTES_KEY = "poolWorkdayMinutes";
+const POOL_FREE_DAY_MINUTES_KEY = "poolFreeDayMinutes";
+const POOL_USAGE_KEY = "poolUsage"; // chrome.storage.local: { dayStart, usedMs }
+const POOL_OPENS_KEY = "poolOpens"; // chrome.storage.local: { dayStart, today: {entry: n} }
+const POOL_GRACES_KEY = "poolGraces"; // chrome.storage.local: { dayStart, today: {entry: n} }
+const DEFAULT_WORKDAY_MINUTES = 7;
+const DEFAULT_FREE_DAY_MINUTES = 30;
 const MAX_GRACES_PER_DAY = 2;
 
 // Normalize user input to "youtube.com" or "facebook.com/nexta.tv"
@@ -67,52 +69,96 @@ function entryRegex(entry) {
     return `^https?://([^/?#]*[.@])?${escaped}([^a-zA-Z0-9_\\-.%@].*)?$`;
 }
 
-// The pool resets every Sunday at 23:00 local time
-function currentPeriodStart(now) {
+// The pool resets every day at local midnight
+function currentDayStart(now) {
     const d = new Date(now);
-    d.setHours(23, 0, 0, 0);
-    d.setDate(d.getDate() - d.getDay());
-    if (d.getTime() > now) d.setDate(d.getDate() - 7);
+    d.setHours(0, 0, 0, 0);
     return d.getTime();
 }
 
 function nextReset(now) {
-    const d = new Date(currentPeriodStart(now));
-    d.setDate(d.getDate() + 7);
+    const d = new Date(currentDayStart(now));
+    d.setDate(d.getDate() + 1);
+    d.setHours(0, 0, 0, 0);
     return d.getTime();
 }
 
-// "Today" starts at local midnight, or at the pool reset if that is later
-function currentDayStart(now) {
-    const d = new Date(now);
-    d.setHours(0, 0, 0, 0);
-    return Math.max(d.getTime(), currentPeriodStart(now));
+// Easter Sunday in the Gregorian calendar (Meeus/Jones/Butcher)
+function easterSunday(year) {
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31);
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(year, month - 1, day);
 }
 
-// Opens from an earlier day or period count as zero
+// Polish public holidays (dni ustawowo wolne od pracy)
+function isPolishHoliday(date) {
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const fixed = [
+        [1, 1], // New Year's Day
+        [1, 6], // Epiphany
+        [5, 1], // Labour Day
+        [5, 3], // Constitution Day
+        [8, 15], // Assumption
+        [11, 1], // All Saints' Day
+        [11, 11], // Independence Day
+        [12, 25], // Christmas Day
+        [12, 26] // Second day of Christmas
+    ];
+    if (year >= 2025) fixed.push([12, 24]); // Christmas Eve, since 2025
+    if (fixed.some(([m, d]) => m === month && d === day)) return true;
+    const easter = easterSunday(year);
+    const dayOfYear = (d) => Math.round((d - new Date(year, 0, 1)) / 86400000);
+    const offset = dayOfYear(new Date(year, month - 1, day)) - dayOfYear(easter);
+    // Easter Sunday, Easter Monday, Pentecost Sunday, Corpus Christi
+    return [0, 1, 49, 60].includes(offset);
+}
+
+// A free day is a Saturday, a Sunday, or a Polish public holiday
+function isFreeDay(now) {
+    const d = new Date(now);
+    const weekday = d.getDay();
+    return weekday === 0 || weekday === 6 || isPolishHoliday(d);
+}
+
+// The pool limit for the day, from the synced settings
+function poolLimitMs(settings, now) {
+    const minutes = isFreeDay(now)
+        ? settings?.[POOL_FREE_DAY_MINUTES_KEY] ?? DEFAULT_FREE_DAY_MINUTES
+        : settings?.[POOL_WORKDAY_MINUTES_KEY] ?? DEFAULT_WORKDAY_MINUTES;
+    return minutes * 60 * 1000;
+}
+
+// Opens from an earlier day count as zero
 function opensNow(opens, now) {
-    const periodStart = currentPeriodStart(now);
     const dayStart = currentDayStart(now);
-    const samePeriod = opens?.periodStart === periodStart;
-    return {
-        periodStart,
-        dayStart,
-        today: samePeriod && opens.dayStart === dayStart ? opens.today || {} : {},
-        week: samePeriod ? opens.week || {} : {}
-    };
+    const sameDay = opens?.dayStart === dayStart;
+    return { dayStart, today: sameDay ? opens.today || {} : {} };
 }
 
 // Graces from an earlier day count as zero
 function gracesNow(graces, now) {
-    const periodStart = currentPeriodStart(now);
     const dayStart = currentDayStart(now);
-    const sameDay = graces?.periodStart === periodStart && graces.dayStart === dayStart;
-    return { periodStart, dayStart, today: sameDay ? graces.today || {} : {} };
+    const sameDay = graces?.dayStart === dayStart;
+    return { dayStart, today: sameDay ? graces.today || {} : {} };
 }
 
-// Usage from an earlier period counts as zero
+// Usage from an earlier day counts as zero
 function usedMsNow(usage, now) {
-    if (!usage || usage.periodStart !== currentPeriodStart(now)) return 0;
+    if (!usage || usage.dayStart !== currentDayStart(now)) return 0;
     return usage.usedMs || 0;
 }
 

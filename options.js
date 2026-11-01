@@ -61,25 +61,34 @@ function setupList(section, key, otherKey, otherName) {
 setupList(document.getElementById("blockedSection"), BLOCKED_KEY, POOL_KEY, "Time pool");
 setupList(document.getElementById("poolSection"), POOL_KEY, BLOCKED_KEY, "Blocked");
 
-const $poolMinutes = document.getElementById("poolMinutes");
 const $poolUsage = document.getElementById("poolUsage");
+const MINUTE_INPUTS = {
+    [POOL_WORKDAY_MINUTES_KEY]: document.getElementById("poolWorkdayMinutes"),
+    [POOL_FREE_DAY_MINUTES_KEY]: document.getElementById("poolFreeDayMinutes")
+};
 
 async function renderPoolUsage() {
-    const { [POOL_MINUTES_KEY]: minutes = DEFAULT_POOL_MINUTES } = await chrome.storage.sync.get(POOL_MINUTES_KEY);
+    const settings = await chrome.storage.sync.get(Object.keys(MINUTE_INPUTS));
     const { [POOL_USAGE_KEY]: usage } = await chrome.storage.local.get(POOL_USAGE_KEY);
     const now = Date.now();
-    const reset = new Date(nextReset(now)).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
-    $poolMinutes.value = minutes;
-    $poolUsage.textContent = `Used ${formatMs(usedMsNow(usage, now))} of ${formatMs(minutes * 60 * 1000)}. Resets ${reset}.`;
+    MINUTE_INPUTS[POOL_WORKDAY_MINUTES_KEY].value = settings[POOL_WORKDAY_MINUTES_KEY] ?? DEFAULT_WORKDAY_MINUTES;
+    MINUTE_INPUTS[POOL_FREE_DAY_MINUTES_KEY].value = settings[POOL_FREE_DAY_MINUTES_KEY] ?? DEFAULT_FREE_DAY_MINUTES;
+    const day = isFreeDay(now) ? "a free day" : "a working day";
+    $poolUsage.textContent =
+        `Today is ${day}. Used ${formatMs(usedMsNow(usage, now))} of ${formatMs(poolLimitMs(settings, now))}. Resets at midnight.`;
 }
 
-$poolMinutes.addEventListener("change", async () => {
-    const minutes = Math.max(0, Math.floor(Number($poolMinutes.value) || 0));
-    await chrome.storage.sync.set({ [POOL_MINUTES_KEY]: minutes });
-});
+for (const [key, $input] of Object.entries(MINUTE_INPUTS)) {
+    $input.addEventListener("change", async () => {
+        const minutes = Math.max(0, Math.floor(Number($input.value) || 0));
+        await chrome.storage.sync.set({ [key]: minutes });
+    });
+}
 
 chrome.storage.onChanged.addListener((changes) => {
-    if (changes[POOL_MINUTES_KEY] || changes[POOL_USAGE_KEY]) renderPoolUsage();
+    if (changes[POOL_WORKDAY_MINUTES_KEY] || changes[POOL_FREE_DAY_MINUTES_KEY] || changes[POOL_USAGE_KEY]) {
+        renderPoolUsage();
+    }
 });
 
 renderPoolUsage();

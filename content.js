@@ -1,7 +1,7 @@
 // Builder Mode — time pool ticker and badge on pool sites
 (() => {
     let poolList = [];
-    let limitMs = DEFAULT_POOL_MINUTES * 60 * 1000;
+    let settings = {};
     let usage = null;
     let opens = null;
     let graceMs = null; // ms of the grace minute left, from the last tick reply
@@ -27,10 +27,10 @@
         }
         const now = Date.now();
         const time = graceMs === null
-            ? `Pool ${formatMs(limitMs - usedMsNow(usage, now))} left`
+            ? `Pool ${formatMs(poolLimitMs(settings, now) - usedMsNow(usage, now))} left`
             : `Extra ${formatMs(graceMs)} left`;
-        const { today, week } = opensNow(opens, now);
-        badge.el.textContent = `${time} (${today[entry] || 0}/${week[entry] || 0})`;
+        const { today } = opensNow(opens, now);
+        badge.el.textContent = `${time} (${today[entry] || 0})`;
         badge.host.style.display = "";
     }
 
@@ -47,8 +47,10 @@
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
         if (areaName === "sync" && changes[POOL_KEY]) poolList = changes[POOL_KEY].newValue || [];
-        if (areaName === "sync" && changes[POOL_MINUTES_KEY]) {
-            limitMs = (changes[POOL_MINUTES_KEY].newValue ?? DEFAULT_POOL_MINUTES) * 60 * 1000;
+        if (areaName === "sync") {
+            for (const key of [POOL_WORKDAY_MINUTES_KEY, POOL_FREE_DAY_MINUTES_KEY]) {
+                if (changes[key]) settings = { ...settings, [key]: changes[key].newValue };
+            }
         }
         if (areaName === "local" && changes[POOL_USAGE_KEY]) usage = changes[POOL_USAGE_KEY].newValue;
         if (areaName === "local" && changes[POOL_OPENS_KEY]) opens = changes[POOL_OPENS_KEY].newValue;
@@ -56,11 +58,11 @@
 
     let timer = null;
     Promise.all([
-        chrome.storage.sync.get([POOL_KEY, POOL_MINUTES_KEY]),
+        chrome.storage.sync.get([POOL_KEY, POOL_WORKDAY_MINUTES_KEY, POOL_FREE_DAY_MINUTES_KEY]),
         chrome.storage.local.get([POOL_USAGE_KEY, POOL_OPENS_KEY])
     ]).then(([sync, local]) => {
         poolList = sync[POOL_KEY] || [];
-        limitMs = (sync[POOL_MINUTES_KEY] ?? DEFAULT_POOL_MINUTES) * 60 * 1000;
+        settings = sync;
         usage = local[POOL_USAGE_KEY];
         opens = local[POOL_OPENS_KEY];
         tick();

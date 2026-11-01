@@ -33,12 +33,17 @@
 
         <section id="poolSection">
             <h2>Time pool</h2>
-            <p>These sites share one weekly time budget. Time counts only while one of them is the active tab.
-                When the pool is empty, they are blocked until Sunday 23:00.</p>
+            <p>These sites share one daily time budget. Time counts only while one of them is the active tab.
+                When the pool is empty, they are blocked until midnight. A free day is a Saturday, a Sunday,
+                or a Polish public holiday.</p>
 
             <label class="minutes">
-                Minutes per week
-                <input id="poolMinutes" type="number" min="0" step="1" />
+                Minutes per working day
+                <input id="poolWorkdayMinutes" type="number" min="0" step="1" />
+            </label>
+            <label class="minutes">
+                Minutes per free day
+                <input id="poolFreeDayMinutes" type="number" min="0" step="1" />
             </label>
             <p id="poolUsage"></p>
 

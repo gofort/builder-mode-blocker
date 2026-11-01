@@ -1,6 +1,6 @@
 if (new URLSearchParams(location.search).get("reason") === "pool") {
     document.getElementById("reason").textContent =
-        "Your time pool is used up. It resets on Sunday at 23:00.";
+        "Your time pool is used up. It resets at midnight.";
 
     // The blocked URL is the last parameter, raw; the hash is its own
     const at = location.search.indexOf("&url=");
