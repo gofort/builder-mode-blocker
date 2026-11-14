@@ -18,6 +18,9 @@ if (new URLSearchParams(location.search).get("reason") === "pool") {
             });
         });
     }
+} else if (isFreeDay(Date.now())) {
+    document.getElementById("reason").textContent =
+        `Your ${WEEKEND_MINUTES} weekend minutes are used up. They reset at midnight.`;
 }
 
 document.getElementById("openOptions").addEventListener("click", () => {

@@ -44,6 +44,18 @@ async function isPoolEmpty() {
     return usage.usedMs >= limitMs;
 }
 
+async function getWeekendUsage() {
+    const now = Date.now();
+    const { [WEEKEND_USAGE_KEY]: usage } = await chrome.storage.local.get(WEEKEND_USAGE_KEY);
+    return { dayStart: currentDayStart(now), usedMs: usedMsNow(usage, now) };
+}
+
+// On a free day the blocked sites stay open until WEEKEND_MINUTES are used
+async function isWeekendOpen() {
+    const usage = await getWeekendUsage();
+    return usage.usedMs < weekendLimitMs(Date.now());
+}
+
 // The focus page for an empty pool. The blocked URL is the last parameter,
 // raw, so its own query string survives.
 function poolBlockedUrl(url) {
@@ -94,7 +106,7 @@ function buildPoolRules(entries, firstId) {
 
 function syncDynamicRules() {
     return serial(async () => {
-        const blocked = await getEntries(BLOCKED_KEY);
+        const blocked = (await isWeekendOpen()) ? [] : await getEntries(BLOCKED_KEY);
         // Pool entries are blocked only when the pool is empty
         const pool = (await isPoolEmpty()) ? await getEntries(POOL_KEY) : [];
         const rules = [
@@ -208,10 +220,28 @@ function startGrace(tabId, target) {
     });
 }
 
-// One focused second on a pool site: from the grace minute if the tab
-// has one, else from the pool
+// One focused second on a blocked site, from the weekend minutes
+async function weekendTick() {
+    const usage = await getWeekendUsage();
+    const limitMs = weekendLimitMs(Date.now());
+    if (usage.usedMs < limitMs) {
+        usage.usedMs += 1000;
+        await chrome.storage.local.set({ [WEEKEND_USAGE_KEY]: usage });
+    }
+    return { graceMs: null, empty: usage.usedMs >= limitMs, page: chrome.runtime.getURL(BLOCKED_PAGE) };
+}
+
+async function isBlockedUrl(href) {
+    let url;
+    try { url = new URL(href); } catch { return false; }
+    return !!matchingEntry(url, await getEntries(BLOCKED_KEY));
+}
+
+// One focused second on a blocked site: from the weekend minutes.
+// On a pool site: from the grace minute if the tab has one, else from the pool.
 function onTick(tab) {
     return serial(async () => {
+        if (await isBlockedUrl(tab.url)) return weekendTick();
         const grace = await getGrace(tab.id);
         if (grace > 0) {
             const left = grace - 1000;
@@ -229,11 +259,11 @@ function onTick(tab) {
             usage.usedMs += 1000;
             await chrome.storage.local.set({ [POOL_USAGE_KEY]: usage });
         }
-        return { graceMs: null, empty: usage.usedMs >= limitMs };
+        return { graceMs: null, empty: usage.usedMs >= limitMs, page: poolBlockedUrl(tab.url) };
     }).then((result) => {
         if (result.empty) {
             syncDynamicRules();
-            chrome.tabs.update(tab.id, { url: poolBlockedUrl(tab.url) });
+            chrome.tabs.update(tab.id, { url: result.page });
         }
         return { graceMs: result.graceMs };
     });
@@ -245,7 +275,8 @@ function tabSiteKey(tabId) {
     return TAB_SITE_PREFIX + tabId;
 }
 
-// A tab opens a pool site when it arrives from another site or a new tab
+// A tab opens a pool site (or a blocked site on a free day) when it
+// arrives from another site or a new tab
 function trackTabSite(tabId, entry) {
     return serial(async () => {
         const key = tabSiteKey(tabId);
@@ -260,11 +291,11 @@ function trackTabSite(tabId, entry) {
     });
 }
 
-// Tabs that already show a pool site (restored, or open before a reload
-// of the extension) are not new opens
+// Tabs that already show a pool or blocked site (restored, or open before
+// a reload of the extension) are not new opens
 function seedTabSites() {
     return serial(async () => {
-        const pool = await getEntries(POOL_KEY);
+        const pool = [...(await getEntries(POOL_KEY)), ...(await getEntries(BLOCKED_KEY))];
         const items = {};
         for (const tab of await chrome.tabs.query({})) {
             let url;
@@ -324,18 +355,22 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     try { url = new URL(changeInfo.url); } catch { return; }
     if (!/^https?:$/.test(url.protocol)) return trackTabSite(tabId, null);
     let page = null;
-    let poolEntry = null;
-    if (matchingEntry(url, await getEntries(BLOCKED_KEY))) {
-        page = chrome.runtime.getURL(BLOCKED_PAGE);
+    let entry = matchingEntry(url, await getEntries(BLOCKED_KEY));
+    if (entry) {
+        if (!(await isWeekendOpen())) {
+            page = chrome.runtime.getURL(BLOCKED_PAGE);
+            entry = null;
+        }
     } else {
-        poolEntry = matchingEntry(url, await getEntries(POOL_KEY));
+        entry = matchingEntry(url, await getEntries(POOL_KEY));
+        // A grace tab goes through
+        if (entry && (await isPoolEmpty()) && !(await hasGrace(tabId))) {
+            page = poolBlockedUrl(changeInfo.url);
+            entry = null;
+        }
     }
-    // A blocked attempt is not an open; a grace tab goes through
-    if (poolEntry && (await isPoolEmpty()) && !(await hasGrace(tabId))) {
-        page = poolBlockedUrl(changeInfo.url);
-        poolEntry = null;
-    }
-    trackTabSite(tabId, poolEntry);
+    // A blocked attempt is not an open
+    trackTabSite(tabId, entry);
     if (page) chrome.tabs.update(tabId, { url: page });
 });
 

@@ -6,9 +6,11 @@ const POOL_FREE_DAY_MINUTES_KEY = "poolFreeDayMinutes";
 const POOL_USAGE_KEY = "poolUsage"; // chrome.storage.local: { dayStart, usedMs }
 const POOL_OPENS_KEY = "poolOpens"; // chrome.storage.local: { dayStart, today: {entry: n} }
 const POOL_GRACES_KEY = "poolGraces"; // chrome.storage.local: { dayStart, today: {entry: n} }
+const WEEKEND_USAGE_KEY = "weekendUsage"; // chrome.storage.local: { dayStart, usedMs }
 const DEFAULT_WORKDAY_MINUTES = 7;
 const DEFAULT_FREE_DAY_MINUTES = 30;
 const MAX_GRACES_PER_DAY = 2;
+const WEEKEND_MINUTES = 15;
 
 // Normalize user input to "youtube.com" or "facebook.com/nexta.tv"
 function normalizeEntry(input) {
@@ -140,6 +142,11 @@ function poolLimitMs(settings, now) {
         ? settings?.[POOL_FREE_DAY_MINUTES_KEY] ?? DEFAULT_FREE_DAY_MINUTES
         : settings?.[POOL_WORKDAY_MINUTES_KEY] ?? DEFAULT_WORKDAY_MINUTES;
     return minutes * 60 * 1000;
+}
+
+// On a free day, the blocked sites share WEEKEND_MINUTES; else they stay blocked
+function weekendLimitMs(now) {
+    return isFreeDay(now) ? WEEKEND_MINUTES * 60 * 1000 : 0;
 }
 
 // Opens from an earlier day count as zero

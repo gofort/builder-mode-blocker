@@ -1,14 +1,26 @@
-// Builder Mode — time pool ticker and badge on pool sites
+// Builder Mode — time ticker and badge on pool sites, and on blocked
+// sites on a free day
 (() => {
     let poolList = [];
+    let blockedList = [];
+    let weekendUsage = null;
     let settings = {};
     let usage = null;
     let opens = null;
     let graceMs = null; // ms of the grace minute left, from the last tick reply
     let badge = null;
 
-    function render(entry) {
-        if (!entry) {
+    // The pool site or blocked site this page shows, or null
+    function currentSite() {
+        const url = new URL(location.href);
+        const pool = matchingEntry(url, poolList);
+        if (pool) return { entry: pool, weekend: false };
+        const blocked = matchingEntry(url, blockedList);
+        return blocked ? { entry: blocked, weekend: true } : null;
+    }
+
+    function render(site) {
+        if (!site) {
             if (badge) badge.host.style.display = "none";
             return;
         }
@@ -26,18 +38,20 @@
             badge = { host, el };
         }
         const now = Date.now();
-        const time = graceMs === null
+        const time = site.weekend
+            ? `Weekend ${formatMs(weekendLimitMs(now) - usedMsNow(weekendUsage, now))} left`
+            : graceMs === null
             ? `Pool ${formatMs(poolLimitMs(settings, now) - usedMsNow(usage, now))} left`
             : `Extra ${formatMs(graceMs)} left`;
         const { today } = opensNow(opens, now);
-        badge.el.textContent = `${time} (${today[entry] || 0})`;
+        badge.el.textContent = `${time} (${today[site.entry] || 0})`;
         badge.host.style.display = "";
     }
 
     function tick() {
-        const entry = matchingEntry(new URL(location.href), poolList);
-        render(entry);
-        if (entry && document.visibilityState === "visible" && document.hasFocus()) {
+        const site = currentSite();
+        render(site);
+        if (site && document.visibilityState === "visible" && document.hasFocus()) {
             chrome.runtime.sendMessage({ type: "tick" })
                 .then((reply) => { graceMs = reply?.graceMs ?? null; })
                 // Fails after the extension reloads; stop then
@@ -47,24 +61,28 @@
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
         if (areaName === "sync" && changes[POOL_KEY]) poolList = changes[POOL_KEY].newValue || [];
+        if (areaName === "sync" && changes[BLOCKED_KEY]) blockedList = changes[BLOCKED_KEY].newValue || [];
         if (areaName === "sync") {
             for (const key of [POOL_WORKDAY_MINUTES_KEY, POOL_FREE_DAY_MINUTES_KEY]) {
                 if (changes[key]) settings = { ...settings, [key]: changes[key].newValue };
             }
         }
         if (areaName === "local" && changes[POOL_USAGE_KEY]) usage = changes[POOL_USAGE_KEY].newValue;
+        if (areaName === "local" && changes[WEEKEND_USAGE_KEY]) weekendUsage = changes[WEEKEND_USAGE_KEY].newValue;
         if (areaName === "local" && changes[POOL_OPENS_KEY]) opens = changes[POOL_OPENS_KEY].newValue;
     });
 
     let timer = null;
     Promise.all([
-        chrome.storage.sync.get([POOL_KEY, POOL_WORKDAY_MINUTES_KEY, POOL_FREE_DAY_MINUTES_KEY]),
-        chrome.storage.local.get([POOL_USAGE_KEY, POOL_OPENS_KEY])
+        chrome.storage.sync.get([POOL_KEY, BLOCKED_KEY, POOL_WORKDAY_MINUTES_KEY, POOL_FREE_DAY_MINUTES_KEY]),
+        chrome.storage.local.get([POOL_USAGE_KEY, POOL_OPENS_KEY, WEEKEND_USAGE_KEY])
     ]).then(([sync, local]) => {
         poolList = sync[POOL_KEY] || [];
+        blockedList = sync[BLOCKED_KEY] || [];
         settings = sync;
         usage = local[POOL_USAGE_KEY];
         opens = local[POOL_OPENS_KEY];
+        weekendUsage = local[WEEKEND_USAGE_KEY];
         tick();
         timer = setInterval(tick, 1000);
     });
